@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from collections import defaultdict
 
 import numpy as np
 
@@ -39,6 +40,7 @@ def load(
         )
 
     if load_skel:
+        bvh_end_sites = defaultdict(lambda: [])
         while cnt < len(words):
             # joint_prev = joint_stack[-2]
             joint_cur = joint_stack[-1]
@@ -56,9 +58,12 @@ def load(
                     float(words[cnt + 2]),
                     float(words[cnt + 3]),
                 )
-                T1 = conversions.p2T(scale * np.array([x, y, z]))
+                p = scale * np.array([x, y, z])
+                T1 = conversions.p2T(p)
                 joint_cur.xform_from_parent_joint = T1
                 cnt += 4
+                if joint_cur.name.endswith("_END"):
+                    bvh_end_sites[joint_cur.name[:-4]].append(tuple(p))
             elif word == "channels":
                 ndofs = int(words[cnt + 1])
                 if ndofs == 6:
@@ -77,7 +82,9 @@ def load(
                     )
                 cnt += ndofs + 2
             elif word == "end":
-                joint_dummy = motion_classes.Joint(name="END")
+                joint_dummy = motion_classes.Joint(
+                    name=f"{joint_cur.name}_END"
+                )
                 joint_stack.append(joint_dummy)
                 cnt += 2
             elif word == "{":
@@ -97,6 +104,7 @@ def load(
                 cnt += 1
             else:
                 raise Exception(f"Unknown Token {word} at token {cnt}")
+        motion.skel.bvh_end_sites = bvh_end_sites
 
     if load_motion:
         assert motion.skel is not None
@@ -240,10 +248,14 @@ def _write_hierarchy(motion, file, joint, scale=1.0, rot_order="XYZ", tab=""):
         )
         joint_order.extend(child_joint_order)
     if len(joint.child_joints) == 0:
-        file.write(tab + "\tEnd Site\n")
-        file.write(tab + "\t{\n")
-        file.write(tab + "\t\tOFFSET %f %f %f\n" % (0.0, 0.0, 0.0))
-        file.write(tab + "\t}\n")
+        offsets = ((0.0, 0.0, 0.0))
+        if hasattr(motion.skel, "bvh_end_sites") and joint.name in motion.skel.bvh_end_sites:
+            offsets = tuple(motion.skel.bvh_end_sites[joint.name])
+        for offset in offsets:
+            file.write(tab + "\tEnd Site\n")
+            file.write(tab + "\t{\n")
+            file.write(tab + "\t\tOFFSET %f %f %f\n" % offset)
+            file.write(tab + "\t}\n")
     file.write(tab + "}\n")
     return joint_order
 
